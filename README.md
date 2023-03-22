@@ -29,6 +29,105 @@ ___
   9. Посмотрим, как менялось общее количество уроков на балансе всех студентов
 ____
 
+## 02. SQL - запрос с описанием логики его выполнения.sql
+```with first_payments as
+        (select     user_id  
+                , date_trunc('day',min(transaction_datetime)) first_payment_date
+            from SKYENG_DB.payments
+            where status_name = 'success'     
+            group by user_id
+            order by user_id)
+, 
+    all_dates as
+        (select distinct date_trunc('day', class_end_datetime) dt
+            from  SKYENG_DB.classes
+            where class_end_datetime >= '2016-01-01' and  class_end_datetime < '2017-01-01' )
+,
+    payments_by_dates as
+        (select    user_id
+                , date_trunc('day',transaction_datetime) payment_date
+                , sum(classes) transaction_balance_change
+            from  SKYENG_DB.payments
+            where status_name = 'success'
+            group by  user_id
+                    , payment_date)
+,
+    all_dates_by_user as
+        (select    user_id
+                , dt 
+            from all_dates q
+        join first_payments w
+            on q.dt >= w.first_payment_date)
+,
+    classes_by_dates as
+        (select    user_id
+                , date_trunc('day', class_end_datetime) class_date     
+                , count(id_class) * (-1) classes 
+            from  SKYENG_DB.classes
+            where class_type != 'trial' and (class_status = 'success' or class_status = 'failed_by_student')
+            group by  user_id
+                , class_date
+            order by classes)
+, 
+    payments_by_dates_cumsum as
+        (select   q.user_id user_id
+                , dt
+                , coalesce(transaction_balance_change,0) transaction_balance_change 
+                , sum(transaction_balance_change) over(partition by q.user_id  order by  dt) transaction_balance_change_cs
+            from all_dates_by_user q
+        left join payments_by_dates w
+            on  q.dt = w.payment_date 
+                and
+                q.user_id = w.user_id)
+,
+    classes_by_dates_dates_cumsum as
+        (select   q.user_id user_id
+                , dt
+                , coalesce(classes,0) classes 
+                , sum(classes) over(partition by q.user_id  order by  dt) classes_cs
+            from all_dates_by_user q
+        left join classes_by_dates w
+            on  q.dt = w.class_date
+                and
+                q.user_id = w.user_id)
+,
+    balances as
+        (select   q.user_id user_id
+                , q.dt dt
+                , transaction_balance_change
+                , transaction_balance_change_cs
+                , classes
+                , classes_cs
+                , (classes_cs + transaction_balance_change_cs) balance 
+            from payments_by_dates_cumsum q
+        left join classes_by_dates_dates_cumsum w
+            on  q.dt  = w.dt
+                and
+                q.user_id  = w.user_id)
+               
+    -- select *
+    --     from balances
+    --     order by 
+    --             --   user_id
+    --             -- , dt
+    --              balance asc
+    --     limit 1000
+    
+  select     dt
+            , sum(transaction_balance_change) transaction_balance_change
+            , sum(transaction_balance_change_cs) transaction_balance_change_cs
+            , sum(classes) classes
+            , sum(classes_cs) classes_cs
+            , sum(balance) balance
+        from balances
+        group by dt
+        order by dt
+        ```        
+    
+
+
+
+
 ## 03. Визуализация динамики общего баланса всех учеников онлайн-школы
 + **sum_transaction_balance_change** - изменение общего баланса под влиянием транзакций (оплат, начислений, корректирующих списаний)
 + **sum_transaction_balance_change_cs** - кумулятивная сумма изменений общего баланса под влиянием транзакций
